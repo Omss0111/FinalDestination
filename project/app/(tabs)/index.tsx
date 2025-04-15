@@ -42,25 +42,6 @@ interface InspectionData {
   TrnDate: string;
 }
 
-interface ProcessMetricsProps {
-  metrics: {
-    xBar: number;
-    stdDevOverall: number;
-    stdDevWithin: number;
-    movingRange: number;
-    cp: number;
-    cpkUpper: number;
-    cpkLower: number;
-    cpk: number;
-    pp: number;
-    ppu: number;
-    ppl: number;
-    ppk: number;
-    lsl: number;
-    usl: number;
-  };
-}
-
 export default function AnalysisScreen() {
   const [selectedShifts, setSelectedShifts] = useState<number[]>([]);
   const [material, setMaterial] = useState('');
@@ -68,6 +49,7 @@ export default function AnalysisScreen() {
   const [gauge, setGauge] = useState('');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
+  const [sampleSize, setSampleSize] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -153,6 +135,20 @@ export default function AnalysisScreen() {
     }
   };
 
+  const calculateSubgroups = (data: number[], size: number) => {
+    const subgroups = [];
+    for (let i = 0; i < data.length; i += size) {
+      const subgroup = data.slice(i, i + size);
+      if (subgroup.length === size) {
+        subgroups.push({
+          mean: subgroup.reduce((a, b) => a + b, 0) / size,
+          range: Math.max(...subgroup) - Math.min(...subgroup)
+        });
+      }
+    }
+    return subgroups;
+  };
+
   const calculateDistributionData = (specifications: number[]) => {
     const numberOfBins = Math.ceil(Math.sqrt(specifications.length));
     
@@ -202,25 +198,34 @@ export default function AnalysisScreen() {
       );
 
       const specifications = filteredData.map(d => parseFloat(d.ActualSpecification));
-      const mean = specifications.reduce((a, b) => a + b, 0) / specifications.length;
-      const stdDev = Math.sqrt(
-        specifications.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (specifications.length - 1)
-      );
+      const subgroups = calculateSubgroups(specifications, sampleSize);
+      
+      const xBarData = subgroups.map((sg, i) => ({ x: i + 1, y: sg.mean }));
+      const rangeData = subgroups.map((sg, i) => ({ x: i + 1, y: sg.range }));
 
-      const xBarData = specifications.map((spec, i) => ({ x: i + 1, y: spec }));
-      const rangeData = specifications.slice(1).map((spec, i) => ({
-        x: i + 1,
-        y: Math.abs(spec - specifications[i])
-      }));
+      // Constants for different sample sizes
+      const constants = {
+        1: { A2: 1.880, D3: 0, D4: 3.267 },
+        2: { A2: 1.023, D3: 0, D4: 3.267 },
+        3: { A2: 0.729, D3: 0, D4: 2.575 },
+        4: { A2: 0.577, D3: 0, D4: 2.282 },
+        5: { A2: 0.483, D3: 0, D4: 2.115 }
+      };
 
-      const rangeMean = rangeData.reduce((a, b) => a + b.y, 0) / rangeData.length;
-      const xBarUcl = mean + (2.66 * rangeMean);
-      const xBarLcl = mean - (2.66 * rangeMean);
-      const rangeUcl = 3.267 * rangeMean;
-      const rangeLcl = 0;
+      const { A2, D3, D4 } = constants[sampleSize as keyof typeof constants];
+
+      const mean = subgroups.reduce((a, b) => a + b.mean, 0) / subgroups.length;
+      const rangeMean = subgroups.reduce((a, b) => a + b.range, 0) / subgroups.length;
+      
+      const xBarUcl = mean + (A2 * rangeMean);
+      const xBarLcl = mean - (A2 * rangeMean);
+      const rangeUcl = D4 * rangeMean;
+      const rangeLcl = D3 * rangeMean;
 
       const usl = parseFloat(filteredData[0].ToSpecification);
       const lsl = parseFloat(filteredData[0].FromSpecification);
+      
+      const stdDev = rangeMean / (sampleSize === 1 ? 1.128 : Math.sqrt(sampleSize));
       const cp = (usl - lsl) / (6 * stdDev);
       const cpu = (usl - mean) / (3 * stdDev);
       const cpl = (mean - lsl) / (3 * stdDev);
@@ -230,39 +235,39 @@ export default function AnalysisScreen() {
 
       const analysis = {
         metrics: {
-          xBar: Number(mean.toFixed(2)),
-          stdDevOverall: Number(stdDev.toFixed(2)),
-          stdDevWithin: Number(stdDev.toFixed(2)),
-          movingRange: Number(rangeMean.toFixed(2)),
-          cp: Number(cp.toFixed(2)),
-          cpkUpper: Number(cpu.toFixed(2)),
-          cpkLower: Number(cpl.toFixed(2)),
-          cpk: Number(cpk.toFixed(2)),
-          pp: Number(cp.toFixed(2)),
-          ppu: Number(cpu.toFixed(2)),
-          ppl: Number(cpl.toFixed(2)),
-          ppk: Number(cpk.toFixed(2)),
-          lsl: Number(lsl.toFixed(2)),
-          usl: Number(usl.toFixed(2))
+          xBar: Number(mean.toFixed(4)),
+          stdDevOverall: Number(stdDev.toFixed(4)),
+          stdDevWithin: Number(stdDev.toFixed(4)),
+          movingRange: Number(rangeMean.toFixed(4)),
+          cp: Number(cp.toFixed(4)),
+          cpkUpper: Number(cpu.toFixed(4)),
+          cpkLower: Number(cpl.toFixed(4)),
+          cpk: Number(cpk.toFixed(4)),
+          pp: Number(cp.toFixed(4)),
+          ppu: Number(cpu.toFixed(4)),
+          ppl: Number(cpl.toFixed(4)),
+          ppk: Number(cpk.toFixed(4)),
+          lsl: Number(lsl.toFixed(4)),
+          usl: Number(usl.toFixed(4))
         },
         controlCharts: {
           xBarData,
           rangeData,
           limits: {
-            xBarUcl: Number(xBarUcl.toFixed(2)),
-            xBarLcl: Number(xBarLcl.toFixed(2)),
-            xBarMean: Number(mean.toFixed(2)),
-            rangeUcl: Number(rangeUcl.toFixed(2)),
-            rangeLcl: Number(rangeLcl.toFixed(2)),
-            rangeMean: Number(rangeMean.toFixed(2))
+            xBarUcl: Number(xBarUcl.toFixed(4)),
+            xBarLcl: Number(xBarLcl.toFixed(4)),
+            xBarMean: Number(mean.toFixed(4)),
+            rangeUcl: Number(rangeUcl.toFixed(4)),
+            rangeLcl: Number(rangeLcl.toFixed(4)),
+            rangeMean: Number(rangeMean.toFixed(4))
           }
         },
         distribution: {
           data: distributionData.data,
           stats: {
-            mean: Number(mean.toFixed(2)),
-            stdDev: Number(stdDev.toFixed(2)),
-            target: Number(((usl + lsl) / 2).toFixed(2))
+            mean: Number(mean.toFixed(4)),
+            stdDev: Number(stdDev.toFixed(4)),
+            target: Number(((usl + lsl) / 2).toFixed(4))
           },
           numberOfBins: distributionData.numberOfBins
         }
@@ -293,13 +298,71 @@ export default function AnalysisScreen() {
           <meta charset="utf-8">
           <title>SPC Analysis Report</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            .header { text-align: center; margin-bottom: 30px; }
-            .section { margin-bottom: 20px; }
-            .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .metric-item { padding: 10px; background: #f5f5f5; border-radius: 5px; }
-            .metric-label { font-weight: bold; color: #333; }
-            .metric-value { color: #666; }
+            body { 
+              font-family: Arial, sans-serif; 
+              padding: 20px;
+              max-width: 1200px;
+              margin: 0 auto;
+            }
+            .header { 
+              text-align: center; 
+              margin-bottom: 30px;
+              padding: 20px;
+              background: #f8fafc;
+              border-radius: 8px;
+            }
+            .section { 
+              margin-bottom: 30px;
+              padding: 20px;
+              background: white;
+              border-radius: 8px;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .metrics-grid { 
+              display: grid; 
+              grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+              gap: 20px;
+            }
+            .metric-item { 
+              padding: 15px;
+              background: #f8fafc;
+              border-radius: 8px;
+              border: 1px solid #e2e8f0;
+            }
+            .metric-label { 
+              font-weight: bold;
+              color: #1e293b;
+              margin-bottom: 8px;
+            }
+            .metric-value { 
+              color: #0f172a;
+              font-size: 1.1em;
+            }
+            .chart-container {
+              margin: 20px 0;
+              padding: 20px;
+              background: white;
+              border-radius: 8px;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .parameters {
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+              gap: 15px;
+              margin-bottom: 20px;
+            }
+            .parameter {
+              background: #f8fafc;
+              padding: 10px;
+              border-radius: 6px;
+            }
+            .interpretation {
+              margin-top: 20px;
+              padding: 15px;
+              background: #f0f9ff;
+              border-radius: 8px;
+              border-left: 4px solid #0ea5e9;
+            }
           </style>
         </head>
         <body>
@@ -310,10 +373,28 @@ export default function AnalysisScreen() {
 
           <div class="section">
             <h2>Analysis Parameters</h2>
-            <p>Date Range: ${format(startDate, 'PPP')} - ${format(endDate, 'PPP')}</p>
-            <p>Material: ${materials.find(m => m.MaterialCode === material)?.MaterialName || material}</p>
-            <p>Operation: ${operations.find(o => o.OperationCode === operation)?.OperationName || operation}</p>
-            <p>Gauge: ${gauges.find(g => g.GuageCode === gauge)?.GuageName || gauge}</p>
+            <div class="parameters">
+              <div class="parameter">
+                <strong>Date Range:</strong><br>
+                ${format(startDate, 'PPP')} - ${format(endDate, 'PPP')}
+              </div>
+              <div class="parameter">
+                <strong>Material:</strong><br>
+                ${materials.find(m => m.MaterialCode === material)?.MaterialName || material}
+              </div>
+              <div class="parameter">
+                <strong>Operation:</strong><br>
+                ${operations.find(o => o.OperationCode === operation)?.OperationName || operation}
+              </div>
+              <div class="parameter">
+                <strong>Gauge:</strong><br>
+                ${gauges.find(g => g.GuageCode === gauge)?.GuageName || gauge}
+              </div>
+              <div class="parameter">
+                <strong>Sample Size:</strong><br>
+                ${sampleSize}
+              </div>
+            </div>
           </div>
 
           <div class="section">
@@ -348,10 +429,12 @@ export default function AnalysisScreen() {
 
           <div class="section">
             <h2>Process Interpretation</h2>
-            <p>Short-term Capability (Cp): ${metrics.cp >= 1.33 ? 'Process is capable' : 'Process needs improvement'}</p>
-            <p>Short-term Centered (Cpk): ${metrics.cpk >= 1.33 ? 'Process is centered' : 'Process centering needs improvement'}</p>
-            <p>Long-term Performance (Pp): ${metrics.pp >= 1.33 ? 'Process is performing well' : 'Long-term performance needs improvement'}</p>
-            <p>Long-term Centered (Ppk): ${metrics.ppk >= 1.33 ? 'Process is stable' : 'Long-term stability needs improvement'}</p>
+            <div class="interpretation">
+              <p><strong>Short-term Capability (Cp):</strong> ${metrics.cp >= 1.33 ? 'Process is capable' : 'Process needs improvement'}</p>
+              <p><strong>Short-term Centered (Cpk):</strong> ${metrics.cpk >= 1.33 ? 'Process is centered' : 'Process centering needs improvement'}</p>
+              <p><strong>Long-term Performance (Pp):</strong> ${metrics.pp >= 1.33 ? 'Process is performing well' : 'Long-term performance needs improvement'}</p>
+              <p><strong>Long-term Centered (Ppk):</strong> ${metrics.ppk >= 1.33 ? 'Process is stable' : 'Long-term stability needs improvement'}</p>
+            </div>
           </div>
         </body>
       </html>
@@ -427,6 +510,20 @@ export default function AnalysisScreen() {
 
           <View style={styles.inputGroup}>
             <Text style={styles.sectionTitle}>Process Details</Text>
+            
+            <View style={styles.pickerContainer}>
+              <Text style={styles.label}>Sample Size</Text>
+              <Picker
+                selectedValue={sampleSize}
+                onValueChange={(value) => setSampleSize(Number(value))}
+                style={styles.picker}
+              >
+                {[1, 2, 3, 4, 5].map((size) => (
+                  <Picker.Item key={size} label={`${size}`} value={size} />
+                ))}
+              </Picker>
+            </View>
+
             <MultiSelect
               label="Shifts"
               options={shifts.map(s => ({ value: s.ShiftId, label: s.ShiftName }))}
@@ -537,12 +634,15 @@ export default function AnalysisScreen() {
         {analysisData && (
           <>
             <ProcessMetrics metrics={analysisData.metrics} />
-            <ControlCharts {...analysisData.controlCharts} />
+            <ControlCharts 
+              {...analysisData.controlCharts} 
+              sampleSize={sampleSize}
+            />
             <HistogramChart 
               data={analysisData.distribution.data}
-              lsl={parseFloat(analysisData.metrics.lsl)}
-              usl={parseFloat(analysisData.metrics.usl)}
-              target={parseFloat(analysisData.distribution.stats.target)}
+              lsl={analysisData.metrics.lsl}
+              usl={analysisData.metrics.usl}
+              target={analysisData.distribution.stats.target}
               numberOfBins={analysisData.distribution.numberOfBins}
             />
             <DistributionChart
