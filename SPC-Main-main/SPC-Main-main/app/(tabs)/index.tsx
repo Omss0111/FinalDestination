@@ -152,7 +152,10 @@ export default function AnalysisScreen() {
   const calculateSubgroups = (data: InspectionData[], size: number): Subgroup[] => {
     const sortedData = data
       .map(d => {
-        const value = parseFloat(d.ActualSpecification);
+        // Clean and parse the numeric value - remove L50 suffix and any commas
+        const cleanValue = d.ActualSpecification.replace(/L50|,/g, '');
+        const value = parseFloat(cleanValue);
+        
         if (isNaN(value)) {
           console.warn('Invalid measurement value found:', d.ActualSpecification);
           return null;
@@ -165,49 +168,41 @@ export default function AnalysisScreen() {
       })
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-      if (sortedData.length < size) {
-        throw new Error(`Not enough data points. Need at least ${size} points for sample size ${size}`);
-      }      
-
+  
+    if (sortedData.length === 0) {
+      throw new Error('No valid data points found');
+    }
+  
     const subgroups: Subgroup[] = [];
     
     if (size === 1) {
-      // For sample size 1, each point is its own subgroup with moving range
-      const values = sortedData.map(d => d.value);
-      const movingRanges = values.slice(1).map((value, i) => Math.abs(value - values[i]));
-      
-      values.forEach((value, i) => {
+      // For sample size 1, use individual values
+      sortedData.forEach((data, i) => {
+        const range = i === 0 ? 0 : Math.abs(data.value - sortedData[i - 1].value);
         subgroups.push({
-          mean: value,
-          range: i === 0 ? movingRanges[0] : movingRanges[i - 1],
-          values: [value]
+          mean: data.value,
+          range,
+          values: [data.value]
         });
       });
     } else {
-      // For sample sizes > 1, create proper subgroups
-      for (let i = 0; i < sortedData.length; i += size) {
-        const subgroupData = sortedData.slice(i, i + size);
+      // For sample sizes > 1, group data points
+      for (let i = 0; i < sortedData.length - (size - 1); i += size) {
+        const groupData = sortedData.slice(i, i + size);
+        const values = groupData.map(d => d.value);
         
-        // Only create a subgroup if we have enough points
-        if (subgroupData.length === size) {
-          const values = subgroupData.map(d => d.value);
-          const mean = values.reduce((a, b) => a + b, 0) / size;
-          const range = Math.max(...values) - Math.min(...values);
-          
-          subgroups.push({
-            mean,
-            range,
-            values
-          });
-        }
+        subgroups.push({
+          mean: values.reduce((a, b) => a + b, 0) / size,
+          range: Math.max(...values) - Math.min(...values),
+          values
+        });
       }
     }
-
+  
     if (subgroups.length === 0) {
-      throw new Error('Not enough complete subgroups for analysis');
+      throw new Error(`Not enough data points for sample size ${size}`);
     }
-
+  
     return subgroups;
   };
 
